@@ -1,0 +1,11 @@
+streamlit
+python-dotenv
+langchain-groq
+langchain-huggingface
+langchain-neo4j
+neo4j
+pymongo
+langchain-core
+langgraph
+pydantic
+sentence-transformers

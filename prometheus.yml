@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 3s
+
+scrape_configs:
+  - job_name: "rag_app"
+    static_configs:
+      - targets: ["rag_app:8000"]

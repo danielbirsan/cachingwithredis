@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from cache import make_key, cache_get, cache_set
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_neo4j import Neo4jVector
@@ -11,12 +12,22 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
+from prometheus_client import Counter, start_http_server
 from pydantic import BaseModel
 import operator
 import json
 
-
 load_dotenv()
+CACHE_HIT = Counter(
+    "cache_hit_total",
+    "Total number of cache hits"
+)
+
+CACHE_MISS = Counter(
+    "cache_miss_total",
+    "Total number of cache misses"
+)
+
 
 NEO4J_URI = os.getenv("NEO4J_URI")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME")
@@ -75,6 +86,20 @@ def find_best_role_match(skills: list[str]) -> str:
     Finds the best Job Role by counting skill matches in Neo4j.
     """
 
+    cache_key = make_key(
+        "role_match",
+        {"skills": [s.strip().lower() for s in skills]},
+    )
+
+    cached = cache_get(cache_key)
+    if cached is not None:
+        CACHE_HIT.inc()
+        print("[CACHE HIT] role_match")
+        return json.dumps(cached)
+
+    CACHE_MISS.inc()
+    print("[CACHE MISS] role_match")
+
     driver = GraphDatabase.driver(NEO4J_URI, auth=AUTH)
 
     cypher_query = """
@@ -91,18 +116,20 @@ def find_best_role_match(skills: list[str]) -> str:
         )
 
         if not records:
-            return {"error": "No matching role found."}
+            return json.dumps({"error": "No matching role found."})
 
         print(records[0]["role_name"])
 
-        return json.dumps(
-            {
-                "role_name": records[0]["role_name"],
-                "description": records[0]["description"],
-                "match_score": records[0]["match_count"],
-                "matched_skills": records[0]["matched_skills"],
-            }
-        )
+        result = {
+            "role_name": records[0]["role_name"],
+            "description": records[0]["description"],
+            "match_score": records[0]["match_count"],
+            "matched_skills": records[0]["matched_skills"],
+        }
+
+        cache_set(cache_key, result, ttl=3600)  
+
+        return json.dumps(result)
 
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -110,11 +137,13 @@ def find_best_role_match(skills: list[str]) -> str:
         driver.close()
 
 
+
 @tool
 def search_mongodb_jobs(
     job_title: str, location: str = None, experience_level: str = None
 ) -> str:
     """
+
     Hybrid Search: Attempts Vector Search first, falls back to Standard Regex if no results.
     """
 
@@ -127,6 +156,24 @@ def search_mongodb_jobs(
 
     if missing_fields:
         return f"STOP: You cannot search yet. The user has not provided: {', '.join(missing_fields)}. Ask the user for this information."
+
+    cache_key = make_key(
+        "job_search",
+        {
+            "job_title": (job_title or "").strip().lower(),
+            "location": (location or "").strip().lower(),
+            "experience_level": (experience_level or "").strip().lower(),
+        },
+    )
+
+    cached = cache_get(cache_key)
+    if cached is not None:
+        CACHE_HIT.inc()
+        print("[CACHE HIT] job_search")
+        return json.dumps(cached)
+
+    CACHE_MISS.inc()
+    print("[CACHE MISS] job_search")
 
     try:
         print(
@@ -207,6 +254,8 @@ def search_mongodb_jobs(
 
         if not results:
             return json.dumps({"message": "No jobs found matching your criteria."})
+
+        cache_set(cache_key, results, ttl=600)
 
         return json.dumps(results)
 

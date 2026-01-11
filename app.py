@@ -18,6 +18,8 @@ import operator
 import json
 import numpy as np
 from cache import init_semantic_cache, semantic_cache_get, semantic_cache_set
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
 
 load_dotenv()
 init_semantic_cache()
@@ -100,7 +102,7 @@ def find_best_role_match(skills: list[str]) -> str:
     # We don't want "Java" to accidentally match "JavaScript" just because they share letters
     cached_result = semantic_cache_get(query_vector, threshold=0.1)
 
-    if cached_result:
+    if cached_result and "role_name" in cached_result:
         CACHE_HIT.inc()
         print(f"[SEMANTIC HIT] role_match for '{skills_text}'")
         return json.dumps(cached_result)
@@ -271,6 +273,17 @@ def search_mongodb_jobs(
         return json.dumps({"error": str(e)})
 
 
+EXTRACT_PROMPT = """
+You are an expert Resume Parser. 
+Extract the technical skills from the user's input below.
+Return ONLY a JSON object with a single key 'skills' containing a list of strings.
+Do not include non-technical skills like "hard working" or "team player".
+If no skills are found, return {{"skills": []}}.
+
+User Input: {input}
+"""
+
+
 ADVISOR_PROMPT = """You are a Career Path Architect.
 Your goal is to map user skills to a Standardized Role in the Neo4j database.
 
@@ -279,10 +292,9 @@ TOOLS:
   It queries the graph relationships directly (e.g. Job -> REQUIRES -> Skill).
 
 INSTRUCTIONS:
-1. Ask for at least 3-4 specific technical skills.
-2. Call `find_best_role_match`.
-3. If the tool returns a match (even with a low score), explain *why* it matched (e.g. "You matched 3 out of 4 skills for Data Scientist").
-4. If the user confirms, say "HANDOFF_TO_SCOUT.
+1. Call `find_best_role_match`.
+2. If the tool returns a match (even with a low score), explain *why* it matched (e.g. "You matched 3 out of 4 skills for Data Scientist").
+3. If the user confirms, say "HANDOFF_TO_SCOUT.
 
 When a tool returns JSON:
 - Read it
@@ -321,17 +333,106 @@ advisor_model = llm_discovery.bind_tools([find_best_role_match])
 scout_model = llm_discovery.bind_tools([search_mongodb_jobs])
 
 
+extract_parser = JsonOutputParser()
+
+
+def extract_skills_with_semantic_cache(user_input: str):
+    """
+    Check semantic cache for similar user introductions.
+    If hit: return cached skills.
+    If miss: Run LLM extraction, cache result, return skills.
+    """
+
+    try:
+        query_vector = embedding_model.embed_query(user_input)
+    except Exception as e:
+        print(f"[Extraction Error] Embedding failed: {e}")
+        return []
+
+    cached_result = semantic_cache_get(query_vector, threshold=0.15)
+
+    if cached_result and isinstance(cached_result, dict) and "skills" in cached_result:
+        CACHE_HIT.inc()
+        print(f"[SEMANTIC HIT] Extraction for input: '{user_input[:30]}...'")
+
+        return (
+            cached_result.get("skills", [])
+            if isinstance(cached_result, dict)
+            else cached_result
+        )
+
+    CACHE_MISS.inc()
+    print(f"[CACHE MISS] Running LLM Extraction for: '{user_input[:30]}...'")
+
+    prompt = ChatPromptTemplate.from_template(EXTRACT_PROMPT)
+
+    # LLM extracts skills form the promt and parses the result
+    chain = prompt | llm_extract | extract_parser
+
+    try:
+        result = chain.invoke({"input": user_input})
+        skills_list = result.get("skills", [])
+
+        semantic_cache_set(user_input, query_vector, {"skills": skills_list})
+
+        return skills_list
+    except Exception as e:
+        print(f"[Extraction Error] LLM parsing failed: {e}")
+        return []
+
+
+def run_extractor(state: CareerState):
+    """
+    Entry Point Node.
+    Analyzes the initial user message to pre-populate state.current_skills.
+    """
+    print("--- Extractor Node Running ---")
+
+    if not state.messages:
+        return {"current_skills": []}
+
+    last_message = state.messages[-1]
+    user_text = last_message.content
+
+    extracted_skills = extract_skills_with_semantic_cache(user_text)
+
+    if extracted_skills:
+        print(f"Skills Extracted: {extracted_skills}")
+
+        return {"current_skills": extracted_skills}
+
+    return {"current_skills": []}
+
+
 def run_advisor(state: CareerState):
     """
     Agent 1: Handles Skill -> Role mapping.
+    Dynamically adjusts prompt based on whether skills were already extracted.
     """
-
     if state.active_agent == "scout":
-        print("--- Advisor: Passing through to Scout ---")
         return {"active_agent": "scout"}
 
     print("--- Advisor Agent Running ---")
-    messages = [SystemMessage(content=ADVISOR_PROMPT)] + state.messages
+
+    existing_skills = state.current_skills or []
+
+    if existing_skills and len(existing_skills) > 0:
+        skills_str = ", ".join(existing_skills)
+        print(f"Advisor Context: User already has skills: {skills_str}")
+
+        system_context = f"""{ADVISOR_PROMPT}
+
+        IMPORTANT UPDATE: 
+        The user has ALREADY provided the following skills: {skills_str}.
+        
+        DO NOT ask "What are your skills?".
+        Instead, immediately call `find_best_role_match` with these skills.
+        If the tool returns a match, present it to the user.
+        """
+    else:
+        system_context = ADVISOR_PROMPT
+
+    messages = [SystemMessage(content=system_context)] + state.messages
     response = advisor_model.invoke(messages)
 
     next_agent = "advisor"
@@ -418,16 +519,23 @@ def route_scout(state):
     return END
 
 
+def route_tools(state):
+    if state.active_agent == "advisor":
+        return "advisor"
+    return "scout"
+
+
 workflow = StateGraph(CareerState)
 
 
+workflow.add_node("extractor", run_extractor)
 workflow.add_node("advisor", run_advisor)
 workflow.add_node("scout", run_scout)
-
-
 workflow.add_node("tools", handle_tool_call)
 
-workflow.set_entry_point("advisor")
+workflow.set_entry_point("extractor")
+
+workflow.add_edge("extractor", "advisor")
 
 
 workflow.add_conditional_edges(
@@ -435,14 +543,6 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_conditional_edges("scout", route_scout)
-
-
-def route_tools(state):
-    if state.active_agent == "advisor":
-        return "advisor"
-    return "scout"
-
-
 workflow.add_conditional_edges("tools", route_tools)
 
 app = workflow.compile()

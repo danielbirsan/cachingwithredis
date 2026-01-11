@@ -3,11 +3,19 @@ import json
 import hashlib
 import redis
 from prometheus_client import Counter, start_http_server
+import numpy as np
+from redis.commands.search.field import VectorField, TextField
+from redis.commands.search.index_definition import IndexDefinition, IndexType
+from redis.commands.search.query import Query
+import time
 
 start_http_server(8000)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+
+CACHE_INDEX_NAME = "semantic_cache_idx"
+VECTOR_DIMENSION = 384  # for 'all-MiniLM-L6-v2'
 
 redis_client = redis.Redis(
     host=REDIS_HOST,
@@ -26,6 +34,7 @@ CACHE_MISSES = Counter(
     "Total number of cache misses",
     ["prefix"],
 )
+
 
 def make_key(prefix: str, payload: dict) -> str:
     """
@@ -54,3 +63,85 @@ def cache_get(key: str):
 
 def cache_set(key: str, value, ttl: int):
     redis_client.setex(key, ttl, json.dumps(value))
+
+
+def init_semantic_cache():
+    """
+    Creates a Vector Search Index in Redis if it doesn't exist.
+    """
+    try:
+        redis_client.ft(CACHE_INDEX_NAME).info()
+        print("Semantic Cache Index already exists.")
+    except Exception as e:
+        print("Creating Semantic Cache Index...")
+        schema = (
+            TextField("$.query_text", as_name="query_text"),
+            VectorField(
+                "$.embedding",
+                "FLAT",
+                {
+                    "TYPE": "FLOAT32",
+                    "DIM": VECTOR_DIMENSION,
+                    "DISTANCE_METRIC": "COSINE",
+                },
+                as_name="embedding",
+            ),
+        )
+        redis_client.ft(CACHE_INDEX_NAME).create_index(
+            schema,
+            definition=IndexDefinition(
+                prefix=["sem_cache:"], index_type=IndexType.JSON
+            ),
+        )
+
+
+def semantic_cache_get(query_vector: list[float], threshold: float = 0.1):
+    """
+    Performs a K-Nearest Neighbor (KNN) search.
+    Threshold 0.1 means 'very similar'. Lower is stricter.
+    """
+    query = (
+        Query(f"(*)=>[KNN 1 @embedding $vec AS score]")
+        .sort_by("score")
+        .return_field("$response", "response")
+        .return_field("score")
+        .dialect(2)
+    )
+
+    params = {"vec": np.array(query_vector, dtype=np.float32).tobytes()}
+
+    try:
+        results = redis_client.ft(CACHE_INDEX_NAME).search(query, query_params=params)
+
+        if results.docs:
+            doc = results.docs[0]
+            score = float(doc.score)
+
+            if score < threshold:
+                print(f"[SEMANTIC HIT] Score: {score}")
+                return json.loads(doc.response)
+
+            print(f"[SEMANTIC MISS] Closest match score {score} was too high.")
+
+    except Exception as e:
+        print(f"Vector search failed: {e}")
+
+    return None
+
+
+def semantic_cache_set(query_text: str, query_vector: list[float], response):
+    """
+    Stores the result along with its vector embedding.
+    """
+
+    key = f"sem_cache:{hash(query_text)}"
+
+    data = {
+        "query_text": query_text,
+        "embedding": query_vector,
+        "response": json.dumps(response),
+        "created_at": time.time(),
+    }
+
+    redis_client.json().set(key, "$", data)
+    redis_client.expire(key, 86400)  # 24 hours

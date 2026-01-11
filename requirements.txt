@@ -9,5 +9,5 @@ langchain-core
 langgraph
 pydantic
 sentence-transformers
-redis
+redis>=5.0.0
 prometheus-client

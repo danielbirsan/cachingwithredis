@@ -16,8 +16,12 @@ from prometheus_client import Counter, start_http_server
 from pydantic import BaseModel
 import operator
 import json
+import numpy as np
+from cache import init_semantic_cache, semantic_cache_get, semantic_cache_set
 
 load_dotenv()
+init_semantic_cache()
+
 CACHE_HIT = Counter("cache_hit_total", "Total number of cache hits")
 
 CACHE_MISS = Counter("cache_miss_total", "Total number of cache misses")
@@ -78,21 +82,36 @@ class CareerState(BaseModel):
 def find_best_role_match(skills: list[str]) -> str:
     """
     Finds the best Job Role by counting skill matches in Neo4j.
+    Uses Semantic Caching to handle variations in skill naming.
     """
 
-    cache_key = make_key(
-        "role_match",
-        {"skills": [s.strip().lower() for s in skills]},
-    )
+    # """
+    # Finds the best Job Role by counting skill matches in Neo4j.
+    # """
 
-    cached = cache_get(cache_key)
-    if cached is not None:
+    skills_text = ", ".join(sorted([s.strip() for s in skills]))
+
+    try:
+        query_vector = embedding_model.embed_query(skills_text)
+    except Exception as e:
+        return json.dumps({"error": f"Embedding failed: {str(e)}"})
+
+    # We use a strict threshold because skills are specific.
+    # We don't want "Java" to accidentally match "JavaScript" just because they share letters
+    cached_result = semantic_cache_get(query_vector, threshold=0.1)
+
+    if cached_result:
         CACHE_HIT.inc()
-        print("[CACHE HIT] role_match")
-        return json.dumps(cached)
+        print(f"[SEMANTIC HIT] role_match for '{skills_text}'")
+        return json.dumps(cached_result)
+
+    exact_key = make_key("role_match", {"skills": sorted(skills)})
+    if cache_get(exact_key):
+        CACHE_HIT.inc()
+        return json.dumps(cache_get(exact_key))
 
     CACHE_MISS.inc()
-    print("[CACHE MISS] role_match")
+    print(f"[CACHE MISS] role_match for '{skills_text}'")
 
     driver = GraphDatabase.driver(NEO4J_URI, auth=AUTH)
 
@@ -121,7 +140,9 @@ def find_best_role_match(skills: list[str]) -> str:
             "matched_skills": records[0]["matched_skills"],
         }
 
-        cache_set(cache_key, result, ttl=3600)
+        semantic_cache_set(skills_text, query_vector, result)
+
+        cache_set(exact_key, result, ttl=3600)
 
         return json.dumps(result)
 
@@ -136,8 +157,8 @@ def search_mongodb_jobs(
     job_title: str, location: str = None, experience_level: str = None
 ) -> str:
     """
-
     Hybrid Search: Attempts Vector Search first, falls back to Standard Regex if no results.
+    Uses Semantic Caching to skip database querying.
     """
 
     missing_fields = []
@@ -150,23 +171,16 @@ def search_mongodb_jobs(
     if missing_fields:
         return f"STOP: You cannot search yet. The user has not provided: {', '.join(missing_fields)}. Ask the user for this information."
 
-    cache_key = make_key(
-        "job_search",
-        {
-            "job_title": (job_title or "").strip().lower(),
-            "location": (location or "").strip().lower(),
-            "experience_level": (experience_level or "").strip().lower(),
-        },
-    )
+    semantic_query = f"{job_title} {location} {experience_level}".strip().lower()
 
-    cached = cache_get(cache_key)
-    if cached is not None:
+    query_vector = embedding_model.embed_query(semantic_query)
+
+    cached_result = semantic_cache_get(query_vector, threshold=0.15)
+    if cached_result:
         CACHE_HIT.inc()
-        print("[CACHE HIT] job_search")
-        return json.dumps(cached)
+        return json.dumps(cached_result)
 
     CACHE_MISS.inc()
-    print("[CACHE MISS] job_search")
 
     try:
         print(
@@ -248,7 +262,7 @@ def search_mongodb_jobs(
         if not results:
             return json.dumps({"message": "No jobs found matching your criteria."})
 
-        cache_set(cache_key, results, ttl=600)
+        semantic_cache_set(semantic_query, query_vector, results)
 
         return json.dumps(results)
 

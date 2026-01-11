@@ -18,15 +18,9 @@ import operator
 import json
 
 load_dotenv()
-CACHE_HIT = Counter(
-    "cache_hit_total",
-    "Total number of cache hits"
-)
+CACHE_HIT = Counter("cache_hit_total", "Total number of cache hits")
 
-CACHE_MISS = Counter(
-    "cache_miss_total",
-    "Total number of cache misses"
-)
+CACHE_MISS = Counter("cache_miss_total", "Total number of cache misses")
 
 
 NEO4J_URI = os.getenv("NEO4J_URI")
@@ -127,7 +121,7 @@ def find_best_role_match(skills: list[str]) -> str:
             "matched_skills": records[0]["matched_skills"],
         }
 
-        cache_set(cache_key, result, ttl=3600)  
+        cache_set(cache_key, result, ttl=3600)
 
         return json.dumps(result)
 
@@ -135,7 +129,6 @@ def find_best_role_match(skills: list[str]) -> str:
         return json.dumps({"error": str(e)})
     finally:
         driver.close()
-
 
 
 @tool

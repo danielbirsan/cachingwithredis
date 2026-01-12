@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#8B4513"  # SaddleBrown (For buttons/highlights)
+backgroundColor = "#F5F5DC" # Beige (The paper/map background)
+secondaryBackgroundColor = "#E8DCCA" # Slightly darker beige (Sidebar)
+textColor = "#3E2723" # Dark Brown (Easy to read text)
+font = "serif" # Serif font looks more like an old map/document

@@ -1,23 +1,26 @@
 import streamlit as st
 from langchain_core.messages import HumanMessage, AIMessage
 
+st.set_page_config(page_title="Kartog AI", page_icon="🗺️", layout="centered")
 
-with st.sidebar:
-    st.header("Controls")
-    if st.button("Reset Conversation"):
-        st.session_state.messages = []
-        st.session_state.graph_state = {"messages": [], "active_agent": "advisor"}
-        st.rerun()
-
-
-st.set_page_config(page_title="Career Agent")
-st.title("AI Career Architect & Scout")
-
+st.title("🗺️ Kartog AI")
+st.markdown("##### *Mapping your skills to the professional landscape.*")
+st.divider()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
 if "graph_state" not in st.session_state:
     st.session_state.graph_state = {"messages": [], "active_agent": "advisor"}
+
+with st.sidebar:
+    st.header("Kartog Controls")
+    st.markdown("Use the controls below to reset your journey.")
+
+    if st.button("Start New Map", type="primary"):
+        st.session_state.messages = []
+        st.session_state.graph_state = {"messages": [], "active_agent": "advisor"}
+        st.rerun()
 
 
 @st.cache_resource
@@ -38,8 +41,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-
-if user_input := st.chat_input("Tell me about your skills..."):
+if user_input := st.chat_input("Describe your skills or career goals..."):
     with st.chat_message("user"):
         st.markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -47,27 +49,32 @@ if user_input := st.chat_input("Tell me about your skills..."):
     st.session_state.graph_state["messages"].append(HumanMessage(content=user_input))
 
     with st.chat_message("assistant"):
-        with st.spinner("Agent is thinking..."):
+        with st.status("Charting course...", expanded=True) as status:
             try:
                 result = agent_app.invoke(st.session_state.graph_state)
-
                 st.session_state.graph_state = result
 
                 last_msg = result["messages"][-1]
 
                 if not last_msg.content and getattr(last_msg, "tool_calls", None):
-                    response_text = "*Checking the database for opportunities...*"
+                    response_text = "*Surveying external job databases...*"
+                    status.write("Scouting terrain...")
                 else:
                     response_text = last_msg.content
+                    status.write("Drafting response...")
 
-                current_agent = result.get("active_agent", "System").upper()
-                formatted_response = f"**{current_agent}**: {response_text}"
+                current_agent = result.get("active_agent", "Kartog").upper()
 
-                st.markdown(formatted_response)
-
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": formatted_response}
-                )
+                status.update(label="Route Found", state="complete", expanded=False)
 
             except Exception as e:
-                st.error(f"An error occurred: {e}")
+                status.update(label="Navigation Error", state="error")
+                st.error(f"System Error: {e}")
+                st.stop()
+
+        formatted_response = f"**{current_agent}**: {response_text}"
+        st.markdown(formatted_response)
+
+        st.session_state.messages.append(
+            {"role": "assistant", "content": formatted_response}
+        )

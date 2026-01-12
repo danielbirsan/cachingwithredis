@@ -294,6 +294,9 @@ TOOLS:
 INSTRUCTIONS:
 1. Call `find_best_role_match`.
 2. If the tool returns a match (even with a low score), explain *why* it matched (e.g. "You matched 3 out of 4 skills for Data Scientist").
+    - clearly state the **Role Name** and **Description** found.
+   - explain the match strength (e.g., "Matched 3/4 skills").
+   - **CRITICAL:** You MUST ask the user for confirmation. End your response with: "Does this role sound like the right direction for you?"
 3. If the user confirms, say "HANDOFF_TO_SCOUT.
 
 When a tool returns JSON:
@@ -425,9 +428,10 @@ def run_advisor(state: CareerState):
         IMPORTANT UPDATE: 
         The user has ALREADY provided the following skills: {skills_str}.
         
-        DO NOT ask "What are your skills?".
-        Instead, immediately call `find_best_role_match` with these skills.
-        If the tool returns a match, present it to the user.
+        Action Plan:
+        1. IMMEDIATELY call `find_best_role_match` with these skills.
+        2. DO NOT assume the user accepts the result.
+        3. Once the tool provides the Role, you MUST display it and ask: "Do you agree to continue with this role?"
         """
     else:
         system_context = ADVISOR_PROMPT

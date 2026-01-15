@@ -30,9 +30,9 @@ CACHE_MISS = Counter("cache_miss_total", "Total number of cache misses")
 
 
 NEO4J_URI = os.getenv("NEO4J_URI")
-NEO4J_USERNAME = os.getenv("NEO4J_USERNAME")
+NEO4J_USER = os.getenv("NEO4J_USER")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
-AUTH = (NEO4J_USERNAME, NEO4J_PASSWORD)
+AUTH = (NEO4J_USER, NEO4J_PASSWORD)
 
 MONGO_CONNECTION_STRING = os.getenv("MONGO_CONNECTION_STRING")
 
@@ -53,7 +53,7 @@ try:
     vector_store = Neo4jVector.from_existing_graph(
         embedding=embedding_model,
         url=NEO4J_URI,
-        username=NEO4J_USERNAME,
+        username=NEO4J_USER,
         password=NEO4J_PASSWORD,
         index_name="job_vector_index",
         node_label="Role",

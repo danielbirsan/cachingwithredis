@@ -529,6 +529,13 @@ def route_tools(state):
     return "scout"
 
 
+def route_entry(state: CareerState):
+    if state.active_agent == "scout":
+        return "scout"
+
+    return "extractor"
+
+
 workflow = StateGraph(CareerState)
 
 
@@ -537,13 +544,27 @@ workflow.add_node("advisor", run_advisor)
 workflow.add_node("scout", run_scout)
 workflow.add_node("tools", handle_tool_call)
 
-workflow.set_entry_point("extractor")
+# workflow.set_entry_point("extractor")
+
+workflow.set_conditional_entry_point(
+    route_entry,
+    {
+        "extractor": "extractor",
+        "scout": "scout",
+    },
+)
 
 workflow.add_edge("extractor", "advisor")
 
 
 workflow.add_conditional_edges(
-    "advisor", route_advisor, {"tools": "tools", "scout": "scout", END: END}
+    "advisor",
+    route_advisor,
+    {
+        "tools": "tools",
+        "scout": "scout",
+        END: END,
+    },
 )
 
 workflow.add_conditional_edges("scout", route_scout)

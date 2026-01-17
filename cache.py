@@ -145,3 +145,32 @@ def semantic_cache_set(query_text: str, query_vector: list[float], response):
 
     redis_client.json().set(key, "$", data)
     redis_client.expire(key, 86400)  # 24 hours
+
+
+def invalidate_cache_for_term(term: str):
+    """
+    Searches the Semantic Cache Index for any queries containing the specific term
+    (e.g., 'Software Engineer') and deletes those specific keys.
+    """
+    if not term:
+        return
+
+    search_query = Query(f'@query_text:"{term}"').no_content()
+
+    try:
+        result = redis_client.ft(CACHE_INDEX_NAME).search(search_query)
+
+        if not result.docs:
+            print(f"[CACHE CLEANUP] No entries found for term: '{term}'")
+            return
+
+        keys_to_delete = [doc.id for doc in result.docs]
+
+        if keys_to_delete:
+            redis_client.delete(*keys_to_delete)
+            print(
+                f"[CACHE CLEANUP] Invalidated {len(keys_to_delete)} keys for: '{term}'"
+            )
+
+    except Exception as e:
+        print(f"[CACHE CLEANUP ERROR] Could not invalidate: {e}")

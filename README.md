@@ -10,9 +10,8 @@
 5. [Logica AI și RAG (LangGraph)](#5-logica-ai-și-rag-langgraph)
 6. [Tool-uri și Recuperarea Informației](#6-tool-uri-și-recuperarea-informației-retrieval)
 7. [Monitorizare și Observabilitate](#7-monitorizare-și-observabilitate)
-8. [Utilizare LLM](#8-utilizare-llm)
-9. [Instalare și Configurare](#9-instalare-și-configurare)
-10. [Bibliografie](#10-bibliografie)
+8. [Instalare și Configurare](#8-instalare-și-configurare)
+9. [Bibliografie](#9-bibliografie)
 
 ---
 
@@ -620,12 +619,7 @@ Dashboard-urile includ grafice pentru rata de succes a cache-ului și distribuț
 
 ---
 
-## 8. Utilizare LLM
-
-
----
-
-## 9. Instalare și Configurare
+## 8. Instalare și Configurare
 
 ### Prerequisites
 * Docker & Docker Compose instalate.
@@ -641,7 +635,7 @@ REDIS_URL=...
 ```
 
 
-## 10. Bibliografie
+## 9. Bibliografie
 
 - Lee, R. J., Goel, S., & Ramchandran, K. (2025). [Quantifying Positional Biases in Text Embedding Models](https://arxiv.org/abs/2412.15241).
 - Wallace, J. A. (2024) [Semantic caching for faster, smarter LLM apps](https://redis.io/blog/what-is-semantic-caching/)

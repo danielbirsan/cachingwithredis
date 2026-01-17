@@ -1,2 +1,4 @@
 .env
 .vscode
+job_to_insert.py
+__pycache__/

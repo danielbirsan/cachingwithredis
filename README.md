@@ -59,6 +59,7 @@ Soluția noastră transformă procesul dintr-o simplă căutare într-un proces 
 * `redis`: Stocare key-value pentru caching semantic.
 * `prometheus`: Colector de metrici de sistem.
 * `grafana`: Dashboard pentru vizualizarea metricilor.
+* `watcher`: Script pentru detectarea schimbărilor in baza de date
 
 ---
 
@@ -210,6 +211,9 @@ Pentru implementarea mecanismului de Semantic Caching, sistemul utiizează imagi
 
 Sistemul utilizează pentru vectorizare modelul `sentence-transformers/all-MiniLM-L6-v2`, o soluție compactă instalată local, care transformă interogările în reprezentări vectoriale de **384 de dimensiuni**, optimizate pentru o latență scăzută. Calculul distanței semantice se realizează prin metrica Cosine Similarity (`DISTANCE_METRIC: "COSINE"`). Spre deosebire de alte metrici care măsoară distanța fizică (Euclidiană), similaritatea cosinusoidală analizează unghiul dintre doi vectori într-un spațiu multidimensional.
 
+$$\text{Distanța}(A, B) = 1 - \frac{\mathbf{A} \cdot \mathbf{B}}{\|\mathbf{A}\| \|\mathbf{B}\|} = 1 - \frac{\sum_{i=1}^{n} A_i B_i}{\sqrt{\sum_{i=1}^{n} A_i^2} \sqrt{\sum_{i=1}^{n} B_i^2}}$$
+
+
 Indexul este definit ca `semantic_cache_idx` și stochează datele în format JSON.
 
 ### Implementarea sistemului de Semantic Caching și comparația cu sistemele standard (Exact Match)
@@ -344,6 +348,65 @@ def semantic_cache_set(query_text: str, query_vector: list[float], response):
 ```
 
 Se aplică o politică de retenție de 24 de ore (86400 secunde) pentru a menține relevanța informațiilor.
+
+### Strategia de Invalidare a Cache-ului (Event-Driven Invalidation)
+
+Deoarece Semantic Caching stochează răspunsuri pentru perioade lungi (24h), există riscul ca datele servite să devină "stale" (învechite) atunci când starea reală a joburilor se modifică în baza de date principală (MongoDB).
+
+Pentru a remedia acest lucru, sistemul implementează o arhitectură reactivă: un serviciu de tip "Watcher" ascultă modificările din MongoDB în timp real și curăță selectiv intrările relevante din Redis.
+
+#### Configurare MongoDB
+Pentru ca sistemul să poată invalida cache-ul în momentul ștergerii unui job, baza de date trebuie să furnizeze starea documentului înainte de ștergere (`fullDocumentBeforeChange`).
+
+Acest lucru necesită activarea `changeStreamPreAndPostImages` pe colecția `job_postings`. Această comandă a fost executată în mongosh:
+
+```sh
+db.runCommand({
+    collMod: "job_postings",
+    changeStreamPreAndPostImages: { enabled: true }
+})
+```
+
+Fără această configurare, evenimentele de tip delete nu ar conține titlul jobului șters, făcând imposibilă invalidarea cache-ului semantic asociat.
+
+
+#### Arhitectura "The Watcher"
+
+Un script dedicat (`watcher.py`) utilizează MongoDB Change Streams pentru a monitoriza operațiunile de scriere (CRUD).
+
+
+#### Mecanismul de Invalidare (Redis)
+
+Funcția `invalidate_cache_for_term` nu șterge o cheie simplă, ci efectuează o căutare inversă în indexul semantic. 
+
+
+* 1. Se execută un query în `RediSearch` pe câmpul `query_text` al indexului semantic. (ex: caută toate intrările cache care conțin "Python Developer)
+
+```python
+Query(f'@query_text:"{term}"').no_content()
+```
+
+* 2. Redis returnează ID-urile documentelor cache care se potrivesc.
+
+* 3. Se execută comanda DELETE pentru lista de chei identificate.
+
+```python
+keys_to_delete = [doc.id for doc in result.docs]
+
+if keys_to_delete:
+    redis_client.delete(*keys_to_delete)
+```
+
+
+Acest proces asigură consistența eventuală (Eventual Consistency) între MongoDB și Redis Semantic Cache, eliminând riscul ca utilizatorii să primească recomandări pentru joburi care nu mai există sau au fost modificate semnificativ.
+
+### Managementul Memoriei și Politica de Evicțiune (LRU)
+
+Containerul Redis este configurat să funcționeze ca un cache volatil pur, având o limită strictă de memorie și mecanisme de persistență dezactivate. Această strategie este definită prin variabila de mediu: `REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru --save "" --appendonly no`
+
+#### De ce LRU (Least Recently Used) și nu LFU (Least Frequently Used)?
+
+Alegerea politicii LRU (`allkeys-lru`) în detrimentul LFU este dictată de natura dinamică a pieței muncii, unde relevanța termenilor depinde de temporalitate (ce se caută acum) și nu doar de frecvența istorică. Spre deosebire de LFU, care ar putea bloca memoria cu tehnologii populare în trecut dar inactive în prezent.
 
 ---
 
@@ -557,8 +620,7 @@ Dashboard-urile includ grafice pentru rata de succes a cache-ului și distribuț
 
 ---
 
-## 8. Utilizare LLM  (TODO)
-
+## 8. Utilizare LLM
 
 
 ---
@@ -580,10 +642,15 @@ REDIS_URL=...
 
 
 ## 10. Bibliografie
-1. https://arxiv.org/pdf/2412.15241
-2. https://en.wikipedia.org/wiki/Tf%E2%80%93idf
-3. https://nlp.stanford.edu/IR-book/pdf/06vect.pdf
-4. https://redis.io/blog/what-is-semantic-caching/
-5. https://redis.io/docs/latest/develop/ai/search-and-query/vectors/
-6. https://www.pinecone.io/learn/series/faiss/vector-indexes/
-7. https://www.ibm.com/think/topics/llm-temperature
+
+- Lee, R. J., Goel, S., & Ramchandran, K. (2025). [Quantifying Positional Biases in Text Embedding Models](https://arxiv.org/abs/2412.15241).
+- Wallace, J. A. (2024) [Semantic caching for faster, smarter LLM apps](https://redis.io/blog/what-is-semantic-caching/)
+- Briggs, J. (2024). [Nearest Neighbor Indexes for Similarity Search](https://www.pinecone.io/learn/series/faiss/vector-indexes/). In *Faiss: The Missing Manual*. Pinecone.
+- Noble, J. (2025) [What is LLM temperature?](https://www.ibm.com/think/topics/llm-temperature). IBM.
+- Noble, J. (2025) [Implementing graph RAG using knowledge graphs](https://www.ibm.com/think/tutorials/knowledge-graph-rag). IBM.
+- Manning, C. et al. (2009) [Introduction to Information Retrieval - Vector Space Classification](https://nlp.stanford.edu/IR-book/pdf/06vect.pdf). Cambridge University Press.
+- Redis Docs, [Vector search concepts](https://redis.io/docs/latest/develop/ai/search-and-query/vectors/)
+- MongoDB Docs, [Change Streams](https://www.mongodb.com/docs/manual/changeStreams/)
+- Wikipedia, [tf–idf](https://en.wikipedia.org/wiki/Tf%E2%80%93idf).
+- Google, Gemini: https://gemini.google.com/app/abf62a8ca2c7885e Date generated: 12.01.2026
+- Google, Gemini: https://gemini.google.com/app/468f5a02fccbed90 Date generated: 17.01.2026

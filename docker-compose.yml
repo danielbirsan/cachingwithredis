@@ -26,7 +26,14 @@ services:
     ports:
       - "6379:6379"
       - "8001:8001"  # Redis Stack UI
-
+    environment:
+      - REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
   rag_app:
     build: .
     container_name: bdnsv_streamlit
@@ -64,6 +71,19 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+
+  watcher:
+    build: .
+    container_name: bdnsv_watcher
+    command: python watcher.py
+    depends_on:
+      - redis
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHONUNBUFFERED=1
 
 volumes:
   neo4j_data:

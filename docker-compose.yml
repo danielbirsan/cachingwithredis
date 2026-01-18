@@ -39,6 +39,19 @@ services:
     container_name: bdnsv_streamlit
     ports:
       - "8501:8501"
+<<<<<<< Updated upstream
+=======
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PYTHONUNBUFFERED: "1"
+>>>>>>> Stashed changes
     depends_on:
       neo4j:
         condition: service_healthy
@@ -69,6 +82,13 @@ services:
     container_name: bdnsv_grafana
     ports:
       - "3000:3000"
+<<<<<<< Updated upstream
+=======
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+
+>>>>>>> Stashed changes
     depends_on:
       - prometheus
 

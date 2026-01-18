@@ -6,6 +6,12 @@ RUN apt-get update && apt-get install -y build-essential curl
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Pre-download embeddings model at build time
+RUN python - <<'PY'
+from sentence_transformers import SentenceTransformer
+SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+print("Model cached.")
+PY
 
 COPY . .
 

@@ -8,6 +8,7 @@ from redis.commands.search.field import VectorField, TextField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 import time
+from metrics import CACHE_HITS, CACHE_MISSES
 
 start_http_server(8000)
 
@@ -21,18 +22,6 @@ redis_client = redis.Redis(
     host=REDIS_HOST,
     port=REDIS_PORT,
     decode_responses=True,
-)
-
-CACHE_HITS = Counter(
-    "cache_hits_total",
-    "Total number of cache hits",
-    ["prefix"],
-)
-
-CACHE_MISSES = Counter(
-    "cache_misses_total",
-    "Total number of cache misses",
-    ["prefix"],
 )
 
 

@@ -1,18 +1,22 @@
-from prometheus_client import Counter, start_http_server
+from prometheus_client import Counter, Histogram, start_http_server
 
-# Cache metrics
 CACHE_HITS = Counter(
     "cache_hits_total",
     "Total number of cache hits",
-    ["cache_name"]
+    ["layer"]  # exact / semantic / llm
 )
 
 CACHE_MISSES = Counter(
     "cache_misses_total",
     "Total number of cache misses",
-    ["cache_name"]
+    ["layer"]
 )
 
-def start_metrics_server():
-    # Portul pe care Prometheus îl va scrapa
+REQUEST_LATENCY = Histogram(
+    "rag_request_latency_seconds",
+    "Latency of RAG requests",
+    ["component"]
+)
+
+def start_metrics():
     start_http_server(8000)

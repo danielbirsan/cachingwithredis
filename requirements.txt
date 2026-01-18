@@ -1,13 +1,32 @@
 streamlit
 python-dotenv
+
+# LangChain / Graph
+langchain
+langchain-core
 langchain-groq
 langchain-huggingface
 langchain-neo4j
+langgraph
+
+# Databases
 neo4j
 pymongo
-langchain-core
-langgraph
-pydantic
+
+# Embeddings / ML
 sentence-transformers
+<<<<<<< Updated upstream
 redis
+=======
+numpy
+scipy
+
+# Cache
+redis>=5.0.0
+
+# Metrics
+>>>>>>> Stashed changes
 prometheus-client
+
+# Models
+pydantic

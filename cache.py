@@ -3,8 +3,17 @@ import json
 import hashlib
 import redis
 from prometheus_client import Counter, start_http_server
+<<<<<<< Updated upstream
 
 start_http_server(8000)
+=======
+import numpy as np
+from redis.commands.search.field import VectorField, TextField
+from redis.commands.search.index_definition import IndexDefinition, IndexType
+from redis.commands.search.query import Query
+import time
+from metrics import CACHE_HITS, CACHE_MISSES
+>>>>>>> Stashed changes
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -15,17 +24,6 @@ redis_client = redis.Redis(
     decode_responses=True,
 )
 
-CACHE_HITS = Counter(
-    "cache_hits_total",
-    "Total number of cache hits",
-    ["prefix"],
-)
-
-CACHE_MISSES = Counter(
-    "cache_misses_total",
-    "Total number of cache misses",
-    ["prefix"],
-)
 
 def make_key(prefix: str, payload: dict) -> str:
     """

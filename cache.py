@@ -8,7 +8,7 @@ from redis.commands.search.field import VectorField, TextField, TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 import time
-from metrics import CACHE_HITS, CACHE_MISSES
+from metrics import CACHE_OPS, ERROR_COUNT
 
 # start_http_server(8000)
 
@@ -40,13 +40,13 @@ def cache_get(key: str):
     Updates Prometheus HIT / MISS counters.
     """
     val = redis_client.get(key)
-    prefix = key.split(":", 1)[0]
+    method_type = "exact"
 
     if val is not None:
-        CACHE_HITS.labels(prefix=prefix).inc()
+        CACHE_OPS.labels(method=method_type, status="hit").inc()
         return json.loads(val)
 
-    CACHE_MISSES.labels(prefix=prefix).inc()
+    CACHE_OPS.labels(method=method_type, status="miss").inc()
     return None
 
 
@@ -110,14 +110,17 @@ def semantic_cache_get(
             score = float(doc.score)
 
             if score < threshold:
+                CACHE_OPS.labels(method="semantic", status="hit").inc()
                 print(f"[SEMANTIC HIT] Category: {category}, Score: {score}")
                 return json.loads(doc.response)
 
+            CACHE_OPS.labels(method="semantic", status="miss").inc()
             print(
                 f"[SEMANTIC MISS] Best match in {category} was score {score} (threshold {threshold})"
             )
 
     except Exception as e:
+        ERROR_COUNT.labels(type="redis_search").inc()
         print(f"Vector search failed: {e}")
 
     return None

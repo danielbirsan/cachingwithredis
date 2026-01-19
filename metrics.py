@@ -1,16 +1,37 @@
 from prometheus_client import Counter, Histogram, start_http_server
 import socket
 
-CACHE_HITS = Counter(
-    "cache_hits_total",
-    "Total number of cache hits",
-    ["layer"],  # exact / semantic / llm
+# CACHE_HITS = Counter(
+#     "cache_hits_total",
+#     "Total number of cache hits",
+#     ["layer"],  # exact / semantic / llm
+# )
+
+# CACHE_MISSES = Counter("cache_misses_total", "Total number of cache misses", ["layer"])
+
+# REQUEST_LATENCY = Histogram(
+#     "rag_request_latency_seconds", "Latency of RAG requests", ["component"]
+# )
+
+
+CACHE_OPS = Counter(
+    "kartog_cache_ops_total",
+    "Cache Operations (Hits/Misses)",
+    ["method", "status"],  # method: 'exact' or 'semantic', status: 'hit' or 'miss'
 )
 
-CACHE_MISSES = Counter("cache_misses_total", "Total number of cache misses", ["layer"])
+TOOL_USAGE = Counter(
+    "kartog_tool_usage_total", "Execution count of specific tools", ["tool_name"]
+)
 
 REQUEST_LATENCY = Histogram(
-    "rag_request_latency_seconds", "Latency of RAG requests", ["component"]
+    "kartog_request_latency_seconds",
+    "Time spent processing requests",
+    ["stage"],  # e.g., 'total_flow', 'llm_extraction', 'neo4j_query'
+)
+
+ERROR_COUNT = Counter(
+    "kartog_errors_total", "Exceptions raised in the application", ["type"]
 )
 
 

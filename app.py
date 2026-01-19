@@ -21,15 +21,15 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 import threading
 import metrics
-from metrics import CACHE_HITS, CACHE_MISSES
+from metrics import TOOL_USAGE, REQUEST_LATENCY, ERROR_COUNT
 
 
 load_dotenv()
 init_semantic_cache()
 
-CACHE_HIT = Counter("cache_hit_total", "Total number of cache hits")
+# CACHE_HIT = Counter("cache_hit_total", "Total number of cache hits")
 
-CACHE_MISS = Counter("cache_miss_total", "Total number of cache misses")
+# CACHE_MISS = Counter("cache_miss_total", "Total number of cache misses")
 
 
 threading.Thread(target=metrics.start_metrics, daemon=True).start()
@@ -80,73 +80,72 @@ def find_best_role_match(skills: list[str]) -> str:
     Uses Semantic Caching to handle variations in skill naming.
     """
 
-    # """
-    # Finds the best Job Role by counting skill matches in Neo4j.
-    # """
+    TOOL_USAGE.labels(tool_name="find_best_role_match").inc()
 
-    skills_text = ", ".join(sorted([s.strip() for s in skills]))
+    with REQUEST_LATENCY.labels(stage="neo4j_lookup").time():
+        skills_text = ", ".join(sorted([s.strip() for s in skills]))
 
-    try:
-        query_vector = embedding_model.embed_query(skills_text)
-    except Exception as e:
-        return json.dumps({"error": f"Embedding failed: {str(e)}"})
+        try:
+            query_vector = embedding_model.embed_query(skills_text)
+        except Exception as e:
+            return json.dumps({"error": f"Embedding failed: {str(e)}"})
 
-    # We use a strict threshold because skills are specific.
-    # We don't want "Java" to accidentally match "JavaScript" just because they share letters
-    cached_result = semantic_cache_get(
-        query_vector, category="role_match", threshold=0.1
-    )
+        # We use a strict threshold because skills are specific.
+        # We don't want "Java" to accidentally match "JavaScript" just because they share letters
+        cached_result = semantic_cache_get(
+            query_vector, category="role_match", threshold=0.1
+        )
 
-    if cached_result and "role_name" in cached_result:
-        CACHE_HITS.labels(layer="semantic").inc()
-        print(f"[SEMANTIC HIT] role_match for '{skills_text}'")
-        return json.dumps(cached_result)
+        if cached_result and "role_name" in cached_result:
+            # CACHE_HITS.labels(layer="semantic").inc()
+            print(f"[SEMANTIC HIT] role_match for '{skills_text}'")
+            return json.dumps(cached_result)
 
-    exact_key = make_key("role_match", {"skills": sorted(skills)})
-    if cache_get(exact_key):
-        CACHE_HITS.labels(layer="exact").inc()
-        return json.dumps(cache_get(exact_key))
+        exact_key = make_key("role_match", {"skills": sorted(skills)})
+        if cache_get(exact_key):
+            # CACHE_HITS.labels(layer="exact").inc()
+            return json.dumps(cache_get(exact_key))
 
-    CACHE_MISSES.labels(layer="role_match").inc()
-    print(f"[CACHE MISS] role_match for '{skills_text}'")
+        # CACHE_MISSES.labels(layer="role_match").inc()
+        print(f"[CACHE MISS] role_match for '{skills_text}'")
 
-    driver = GraphDatabase.driver(NEO4J_URI, auth=AUTH)
+        driver = GraphDatabase.driver(NEO4J_URI, auth=AUTH)
 
-    cypher_query = """
-    UNWIND $skills AS user_skill
-    MATCH (r:Role)-[:REQUIRES|RECOMMENDS]-(s:Skill)
-    WHERE toLower(s.name) = toLower(user_skill)
-    WITH r, count(s) AS match_count, collect(s.name) AS matched_skills
-    ORDER BY match_count DESC LIMIT 1
-    RETURN r.name AS role_name, r.description AS description, match_count, matched_skills
-    """
-    try:
-        with driver.session(database="neo4j") as session:
-            result = session.run(cypher_query, skills=skills)
-            records = list(result)
+        cypher_query = """
+        UNWIND $skills AS user_skill
+        MATCH (r:Role)-[:REQUIRES|RECOMMENDS]-(s:Skill)
+        WHERE toLower(s.name) = toLower(user_skill)
+        WITH r, count(s) AS match_count, collect(s.name) AS matched_skills
+        ORDER BY match_count DESC LIMIT 1
+        RETURN r.name AS role_name, r.description AS description, match_count, matched_skills
+        """
+        try:
+            with driver.session(database="neo4j") as session:
+                result = session.run(cypher_query, skills=skills)
+                records = list(result)
 
-        if not records:
-            return json.dumps({"error": "No matching role found."})
+            if not records:
+                return json.dumps({"error": "No matching role found."})
 
-        record = records[0]
+            record = records[0]
 
-        result = {
-            "role_name": record["role_name"],
-            "description": record["description"],
-            "match_score": record["match_count"],
-            "matched_skills": record["matched_skills"],
-        }
+            result = {
+                "role_name": record["role_name"],
+                "description": record["description"],
+                "match_score": record["match_count"],
+                "matched_skills": record["matched_skills"],
+            }
 
-        semantic_cache_set(skills_text, query_vector, result, category="role_match")
+            semantic_cache_set(skills_text, query_vector, result, category="role_match")
 
-        cache_set(exact_key, result, ttl=3600)
+            cache_set(exact_key, result, ttl=3600)
 
-        return json.dumps(result)
+            return json.dumps(result)
 
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-    finally:
-        driver.close()
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+        finally:
+            driver.close()
 
 
 @tool
@@ -157,6 +156,8 @@ def search_mongodb_jobs(
     Hybrid Search: Attempts Vector Search first, falls back to Standard Regex if no results.
     Uses Semantic Caching to skip database querying.
     """
+
+    TOOL_USAGE.labels(tool_name="search_mongodb_jobs").inc()
 
     missing_fields = []
     if not location or location.lower() in ["unknown", "none", ""]:
@@ -176,10 +177,10 @@ def search_mongodb_jobs(
         query_vector, category="job_search", threshold=0.15
     )
     if cached_result:
-        CACHE_HITS.labels(layer="semantic").inc()
+        # CACHE_HITS.labels(layer="semantic").inc()
         return json.dumps(cached_result)
 
-    CACHE_MISSES.labels(layer="job_search").inc()
+    # CACHE_MISSES.labels(layer="job_search").inc()
     print("[CACHE MISS] job_search")
 
     try:
@@ -355,7 +356,7 @@ def extract_skills_with_semantic_cache(user_input: str):
     )
 
     if cached_result and isinstance(cached_result, dict) and "skills" in cached_result:
-        CACHE_HIT.inc()
+        # CACHE_HIT.inc()
         print(f"[SEMANTIC HIT] Extraction for input: '{user_input[:30]}...'")
 
         return (
@@ -364,7 +365,7 @@ def extract_skills_with_semantic_cache(user_input: str):
             else cached_result
         )
 
-    CACHE_MISS.inc()
+    # CACHE_MISS.inc()
     print(f"[CACHE MISS] Running LLM Extraction for: '{user_input[:30]}...'")
 
     prompt = ChatPromptTemplate.from_template(EXTRACT_PROMPT)
@@ -391,22 +392,23 @@ def run_extractor(state: CareerState):
     Entry Point Node.
     Analyzes the initial user message to pre-populate state.current_skills.
     """
-    print("--- Extractor Node Running ---")
+    with REQUEST_LATENCY.labels(stage="extractor_llm").time():
+        print("--- Extractor Node Running ---")
 
-    if not state.messages:
+        if not state.messages:
+            return {"current_skills": []}
+
+        last_message = state.messages[-1]
+        user_text = last_message.content
+
+        extracted_skills = extract_skills_with_semantic_cache(user_text)
+
+        if extracted_skills:
+            print(f"Skills Extracted: {extracted_skills}")
+
+            return {"current_skills": extracted_skills}
+
         return {"current_skills": []}
-
-    last_message = state.messages[-1]
-    user_text = last_message.content
-
-    extracted_skills = extract_skills_with_semantic_cache(user_text)
-
-    if extracted_skills:
-        print(f"Skills Extracted: {extracted_skills}")
-
-        return {"current_skills": extracted_skills}
-
-    return {"current_skills": []}
 
 
 extract_parser = JsonOutputParser()

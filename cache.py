@@ -10,7 +10,7 @@ from redis.commands.search.query import Query
 import time
 from metrics import CACHE_HITS, CACHE_MISSES
 
-start_http_server(8000)
+# start_http_server(8000)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))

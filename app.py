@@ -16,7 +16,6 @@ from prometheus_client import Counter, start_http_server
 from pydantic import BaseModel
 import operator
 import json
-import numpy as np
 from cache import init_semantic_cache, semantic_cache_get, semantic_cache_set
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
@@ -33,11 +32,7 @@ CACHE_HIT = Counter("cache_hit_total", "Total number of cache hits")
 CACHE_MISS = Counter("cache_miss_total", "Total number of cache misses")
 
 
-
-threading.Thread(
-    target=metrics.start_metrics,
-    daemon=True
-).start()
+threading.Thread(target=metrics.start_metrics, daemon=True).start()
 
 
 NEO4J_URI = os.getenv("NEO4J_URI")
@@ -60,19 +55,6 @@ print("Connecting to Databases...")
 mongo_client = MongoClient(MONGO_CONNECTION_STRING)
 jobs_collection = mongo_client[MONGO_DB]["job_postings"]
 
-try:
-    vector_store = Neo4jVector.from_existing_graph(
-        embedding=embedding_model,
-        url=NEO4J_URI,
-        username=NEO4J_USER,
-        password=NEO4J_PASSWORD,
-        index_name="job_vector_index",
-        node_label="Role",
-        text_node_properties=["description", "name"],
-        embedding_node_property="embedding",
-    )
-except Exception as e:
-    print(f"[ERROR]: Could not connect to Neo4j Vector Index: {e}")
 
 llm_discovery = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 llm_extract = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
@@ -111,7 +93,9 @@ def find_best_role_match(skills: list[str]) -> str:
 
     # We use a strict threshold because skills are specific.
     # We don't want "Java" to accidentally match "JavaScript" just because they share letters
-    cached_result = semantic_cache_get(query_vector, threshold=0.1)
+    cached_result = semantic_cache_get(
+        query_vector, category="role_match", threshold=0.1
+    )
 
     if cached_result and "role_name" in cached_result:
         CACHE_HITS.labels(layer="semantic").inc()
@@ -153,7 +137,7 @@ def find_best_role_match(skills: list[str]) -> str:
             "matched_skills": record["matched_skills"],
         }
 
-        semantic_cache_set(skills_text, query_vector, result)
+        semantic_cache_set(skills_text, query_vector, result, category="role_match")
 
         cache_set(exact_key, result, ttl=3600)
 
@@ -188,7 +172,9 @@ def search_mongodb_jobs(
 
     query_vector = embedding_model.embed_query(semantic_query)
 
-    cached_result = semantic_cache_get(query_vector, threshold=0.15)
+    cached_result = semantic_cache_get(
+        query_vector, category="job_search", threshold=0.15
+    )
     if cached_result:
         CACHE_HITS.labels(layer="semantic").inc()
         return json.dumps(cached_result)
@@ -276,7 +262,7 @@ def search_mongodb_jobs(
         if not results:
             return json.dumps({"message": "No jobs found matching your criteria."})
 
-        semantic_cache_set(semantic_query, query_vector, results)
+        semantic_cache_set(semantic_query, query_vector, results, category="job_search")
 
         return json.dumps(results)
 
@@ -364,7 +350,9 @@ def extract_skills_with_semantic_cache(user_input: str):
         print(f"[Extraction Error] Embedding failed: {e}")
         return []
 
-    cached_result = semantic_cache_get(query_vector, threshold=0.15)
+    cached_result = semantic_cache_get(
+        query_vector, category="extraction", threshold=0.15
+    )
 
     if cached_result and isinstance(cached_result, dict) and "skills" in cached_result:
         CACHE_HIT.inc()
@@ -388,7 +376,9 @@ def extract_skills_with_semantic_cache(user_input: str):
         result = chain.invoke({"input": user_input})
         skills_list = result.get("skills", [])
 
-        semantic_cache_set(user_input, query_vector, {"skills": skills_list})
+        semantic_cache_set(
+            user_input, query_vector, {"skills": skills_list}, category="extraction"
+        )
 
         return skills_list
     except Exception as e:
@@ -422,150 +412,6 @@ def run_extractor(state: CareerState):
 extract_parser = JsonOutputParser()
 
 
-def extract_skills_with_semantic_cache(user_input: str):
-    """
-    Check semantic cache for similar user introductions.
-    If hit: return cached skills.
-    If miss: Run LLM extraction, cache result, return skills.
-    """
-
-    try:
-        query_vector = embedding_model.embed_query(user_input)
-    except Exception as e:
-        print(f"[Extraction Error] Embedding failed: {e}")
-        return []
-
-    cached_result = semantic_cache_get(query_vector, threshold=0.15)
-
-    if cached_result and isinstance(cached_result, dict) and "skills" in cached_result:
-        CACHE_HIT.inc()
-        print(f"[SEMANTIC HIT] Extraction for input: '{user_input[:30]}...'")
-
-        return (
-            cached_result.get("skills", [])
-            if isinstance(cached_result, dict)
-            else cached_result
-        )
-
-    CACHE_MISS.inc()
-    print(f"[CACHE MISS] Running LLM Extraction for: '{user_input[:30]}...'")
-
-    prompt = ChatPromptTemplate.from_template(EXTRACT_PROMPT)
-
-    # LLM extracts skills form the promt and parses the result
-    chain = prompt | llm_extract | extract_parser
-
-    try:
-        result = chain.invoke({"input": user_input})
-        skills_list = result.get("skills", [])
-
-        semantic_cache_set(user_input, query_vector, {"skills": skills_list})
-
-        return skills_list
-    except Exception as e:
-        print(f"[Extraction Error] LLM parsing failed: {e}")
-        return []
-
-
-def run_extractor(state: CareerState):
-    """
-    Entry Point Node.
-    Analyzes the initial user message to pre-populate state.current_skills.
-    """
-    print("--- Extractor Node Running ---")
-
-    if not state.messages:
-        return {"current_skills": []}
-
-    last_message = state.messages[-1]
-    user_text = last_message.content
-
-    extracted_skills = extract_skills_with_semantic_cache(user_text)
-
-    if extracted_skills:
-        print(f"Skills Extracted: {extracted_skills}")
-
-        return {"current_skills": extracted_skills}
-
-    return {"current_skills": []}
-
-
-<<<<<<< Updated upstream
-=======
-extract_parser = JsonOutputParser()
-
-
-def extract_skills_with_semantic_cache(user_input: str):
-    """
-    Check semantic cache for similar user introductions.
-    If hit: return cached skills.
-    If miss: Run LLM extraction, cache result, return skills.
-    """
-
-    try:
-        query_vector = embedding_model.embed_query(user_input)
-    except Exception as e:
-        print(f"[Extraction Error] Embedding failed: {e}")
-        return []
-
-    cached_result = semantic_cache_get(query_vector, threshold=0.15)
-
-    if cached_result and isinstance(cached_result, dict) and "skills" in cached_result:
-        CACHE_HITS.labels(layer="semantic_extraction").inc()
-
-        print(f"[SEMANTIC HIT] Extraction for input: '{user_input[:30]}...'")
-
-        return (
-            cached_result.get("skills", [])
-            if isinstance(cached_result, dict)
-            else cached_result
-        )
-
-    CACHE_MISSES.labels(layer="semantic_extraction").inc()
-
-    print(f"[CACHE MISS] Running LLM Extraction for: '{user_input[:30]}...'")
-
-    prompt = ChatPromptTemplate.from_template(EXTRACT_PROMPT)
-
-    # LLM extracts skills form the promt and parses the result
-    chain = prompt | llm_extract | extract_parser
-
-    try:
-        result = chain.invoke({"input": user_input})
-        skills_list = result.get("skills", [])
-
-        semantic_cache_set(user_input, query_vector, {"skills": skills_list})
-
-        return skills_list
-    except Exception as e:
-        print(f"[Extraction Error] LLM parsing failed: {e}")
-        return []
-
-
-def run_extractor(state: CareerState):
-    """
-    Entry Point Node.
-    Analyzes the initial user message to pre-populate state.current_skills.
-    """
-    print("--- Extractor Node Running ---")
-
-    if not state.messages:
-        return {"current_skills": []}
-
-    last_message = state.messages[-1]
-    user_text = last_message.content
-
-    extracted_skills = extract_skills_with_semantic_cache(user_text)
-
-    if extracted_skills:
-        print(f"Skills Extracted: {extracted_skills}")
-
-        return {"current_skills": extracted_skills}
-
-    return {"current_skills": []}
-
-
->>>>>>> Stashed changes
 def run_advisor(state: CareerState):
     """
     Agent 1: Handles Skill -> Role mapping.

@@ -15,9 +15,6 @@ pymongo
 
 # Embeddings / ML
 sentence-transformers
-<<<<<<< Updated upstream
-
-=======
 numpy
 scipy
 
@@ -25,7 +22,6 @@ scipy
 redis>=5.0.0
 
 # Metrics
->>>>>>> Stashed changes
 prometheus-client
 
 # Models

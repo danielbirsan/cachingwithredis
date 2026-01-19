@@ -4,7 +4,7 @@ import hashlib
 import redis
 from prometheus_client import Counter, start_http_server
 import numpy as np
-from redis.commands.search.field import VectorField, TextField
+from redis.commands.search.field import VectorField, TextField, TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 import time
@@ -65,6 +65,7 @@ def init_semantic_cache():
         print("Creating Semantic Cache Index...")
         schema = (
             TextField("$.query_text", as_name="query_text"),
+            TagField("$.category", as_name="category"),
             VectorField(
                 "$.embedding",
                 "FLAT",
@@ -84,13 +85,15 @@ def init_semantic_cache():
         )
 
 
-def semantic_cache_get(query_vector: list[float], threshold: float = 0.1):
+def semantic_cache_get(
+    query_vector: list[float], category: str, threshold: float = 0.1
+):
     """
     Performs a K-Nearest Neighbor (KNN) search.
     Threshold 0.1 means 'very similar'. Lower is stricter.
     """
     query = (
-        Query(f"(*)=>[KNN 1 @embedding $vec AS score]")
+        Query(f"(@category:{{{category}}})=>[KNN 1 @embedding $vec AS score]")
         .sort_by("score")
         .return_field("$response", "response")
         .return_field("score")
@@ -107,10 +110,12 @@ def semantic_cache_get(query_vector: list[float], threshold: float = 0.1):
             score = float(doc.score)
 
             if score < threshold:
-                print(f"[SEMANTIC HIT] Score: {score}")
+                print(f"[SEMANTIC HIT] Category: {category}, Score: {score}")
                 return json.loads(doc.response)
 
-            print(f"[SEMANTIC MISS] Closest match score {score} was too high.")
+            print(
+                f"[SEMANTIC MISS] Best match in {category} was score {score} (threshold {threshold})"
+            )
 
     except Exception as e:
         print(f"Vector search failed: {e}")
@@ -118,15 +123,18 @@ def semantic_cache_get(query_vector: list[float], threshold: float = 0.1):
     return None
 
 
-def semantic_cache_set(query_text: str, query_vector: list[float], response):
+def semantic_cache_set(
+    query_text: str, query_vector: list[float], response, category: str
+):
     """
     Stores the result along with its vector embedding.
     """
 
-    key = f"sem_cache:{hash(query_text)}"
+    key = f"sem_cache:{hash(query_text + category)}"
 
     data = {
         "query_text": query_text,
+        "category": category,
         "embedding": query_vector,
         "response": json.dumps(response),
         "created_at": time.time(),

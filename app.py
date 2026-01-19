@@ -169,6 +169,22 @@ def search_mongodb_jobs(
     if missing_fields:
         return f"STOP: You cannot search yet. The user has not provided: {', '.join(missing_fields)}. Ask the user for this information."
 
+    # STANDARD CACHE
+    payload = {
+        "job_title": job_title.strip().lower(),
+        "location": location.strip().lower(),
+        "experience_level": experience_level.strip().lower(),
+    }
+
+    exact_key = make_key("job_search", payload)
+
+    if exact_match := cache_get(exact_key):
+        print(f"[EXACT HIT] job_search for {payload}")
+        return json.dumps(exact_match)
+
+    print(f"[EXACT MISS] job_search for {payload}")
+
+    # SEMANTIC CACHE
     semantic_query = f"{job_title} {location} {experience_level}".strip().lower()
 
     query_vector = embedding_model.embed_query(semantic_query)
@@ -177,10 +193,10 @@ def search_mongodb_jobs(
         query_vector, category="job_search", threshold=0.15
     )
     if cached_result:
-        # CACHE_HITS.labels(layer="semantic").inc()
+        print("[CACHE OPTIMIZATION] Backfilling Exact Cache from Semantic Hit")
+        cache_set(exact_key, cached_result, ttl=3600)
         return json.dumps(cached_result)
 
-    # CACHE_MISSES.labels(layer="job_search").inc()
     print("[CACHE MISS] job_search")
 
     try:
@@ -188,82 +204,86 @@ def search_mongodb_jobs(
             f"Scout Debug: Searching for '{job_title}' in '{location}' ({experience_level})"
         )
 
-        query_text = f"{location} {experience_level} {job_title}"
+        with REQUEST_LATENCY.labels(stage="mongo_lookup").time():
+            query_text = f"{location} {experience_level} {job_title}"
 
-        query_embedding = embedding_model.embed_query(query_text)
+            query_embedding = embedding_model.embed_query(query_text)
 
-        pipeline = [
-            {
-                "$vectorSearch": {
-                    "index": "job_vector_index",
-                    "path": "embedding",
-                    "queryVector": query_embedding,
-                    "numCandidates": 100,
-                    "limit": 50,
-                }
-            }
-        ]
-
-        match_conditions = []
-        if location:
-            match_conditions.append({"location": {"$regex": location, "$options": "i"}})
-        if experience_level:
-            match_conditions.append(
-                {"experience_level": {"$regex": experience_level, "$options": "i"}}
-            )
-
-        if match_conditions:
-            pipeline.append({"$match": {"$and": match_conditions}})
-
-        pipeline.extend(
-            [
-                {"$addFields": {"score": {"$meta": "vectorSearchScore"}}},
+            pipeline = [
                 {
-                    "$project": {
-                        "_id": 0,
-                        "job_title": 1,
-                        "company": 1,
-                        "location": 1,
-                        "salary_range": 1,
-                        "score": 1,
+                    "$vectorSearch": {
+                        "index": "job_vector_index",
+                        "path": "embedding",
+                        "queryVector": query_embedding,
+                        "numCandidates": 100,
+                        "limit": 50,
                     }
-                },
-                {"$limit": 5},
-            ]
-        )
-
-        results = list(jobs_collection.aggregate(pipeline))
-
-        if not results:
-            print("Vector search yielded 0 results. Switching to Regex Fallback...")
-            query = {}
-            if job_title and "anything" not in job_title.lower():
-                query["job_title"] = {"$regex": job_title, "$options": "i"}
-            if location:
-                query["location"] = {"$regex": location, "$options": "i"}
-            if experience_level:
-                query["experience_level"] = {
-                    "$regex": experience_level,
-                    "$options": "i",
                 }
+            ]
 
-            results = list(
-                jobs_collection.find(
-                    query,
+            match_conditions = []
+            if location:
+                match_conditions.append(
+                    {"location": {"$regex": location, "$options": "i"}}
+                )
+            if experience_level:
+                match_conditions.append(
+                    {"experience_level": {"$regex": experience_level, "$options": "i"}}
+                )
+
+            if match_conditions:
+                pipeline.append({"$match": {"$and": match_conditions}})
+
+            pipeline.extend(
+                [
+                    {"$addFields": {"score": {"$meta": "vectorSearchScore"}}},
                     {
-                        "_id": 0,
-                        "job_title": 1,
-                        "company": 1,
-                        "location": 1,
-                        "salary_range": 1,
+                        "$project": {
+                            "_id": 0,
+                            "job_title": 1,
+                            "company": 1,
+                            "location": 1,
+                            "salary_range": 1,
+                            "score": 1,
+                        }
                     },
-                ).limit(5)
+                    {"$limit": 5},
+                ]
             )
+
+            results = list(jobs_collection.aggregate(pipeline))
+
+            if not results:
+                print("Vector search yielded 0 results. Switching to Regex Fallback...")
+                query = {}
+                if job_title and "anything" not in job_title.lower():
+                    query["job_title"] = {"$regex": job_title, "$options": "i"}
+                if location:
+                    query["location"] = {"$regex": location, "$options": "i"}
+                if experience_level:
+                    query["experience_level"] = {
+                        "$regex": experience_level,
+                        "$options": "i",
+                    }
+
+                results = list(
+                    jobs_collection.find(
+                        query,
+                        {
+                            "_id": 0,
+                            "job_title": 1,
+                            "company": 1,
+                            "location": 1,
+                            "salary_range": 1,
+                        },
+                    ).limit(5)
+                )
 
         if not results:
             return json.dumps({"message": "No jobs found matching your criteria."})
 
         semantic_cache_set(semantic_query, query_vector, results, category="job_search")
+        cache_set(exact_key, results, ttl=3600)
 
         return json.dumps(results)
 

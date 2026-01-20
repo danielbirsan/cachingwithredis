@@ -27,10 +27,6 @@ from metrics import TOOL_USAGE, REQUEST_LATENCY, ERROR_COUNT
 load_dotenv()
 init_semantic_cache()
 
-# CACHE_HIT = Counter("cache_hit_total", "Total number of cache hits")
-
-# CACHE_MISS = Counter("cache_miss_total", "Total number of cache misses")
-
 
 threading.Thread(target=metrics.start_metrics, daemon=True).start()
 

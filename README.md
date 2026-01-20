@@ -560,8 +560,36 @@ Acest tool reprezintă motorul principal de căutare al sistemului. Implementeaz
 ```
 
 ### Caching
-Inițial, sistemul interoghează cache-ul Redis pentru a identifica intrări similare, aplicând un prag threshold de 0.15. Această valoare a fost aleasă pentru a permite o variație mai mare, necesară având în vedere complexitatea și lungimea input-ului (care include detalii precum locația și nivelul de experiență).
 
+Funcția implementează o strategie de caching hibrid pentru a minimiza utilizarea metodelor costisitoare. Înainte de a efectua orice operațiune matematică complexă (embedding), sistemul verifică existența unui răspuns pentru combinația exactă de parametri. Se generează o cheie deterministă bazată pe payload-ul normalizat:
+
+```python
+payload = {
+    "job_title": job_title.strip().lower(),
+    "location": location.strip().lower(),
+    "experience_level": experience_level.strip().lower(),
+}
+exact_key = make_key("job_search", payload)
+```
+
+Dacă aceasta cheie există în cache (`EXACT_HIT`), răspunsul este returnat instantaneu. 
+
+Deoarece natura input-ului permite construirea unui payload prin extragerea parametrilor pentru query, s-a preferat utilizarea caching-ului standard ca prim nivel în această funcție.
+
+În cazul unui `EXACT_MISS`, sistemul trece la caching-ul semantic cu un prag de 0.15. Această valoare a fost aleasă pentru a permite o variație mai mare, necesară având în vedere complexitatea și lungimea input-ului (care include detalii precum locația și nivelul de experiență).
+
+#### Optimizarea
+
+Dacă sistemul găsește un răspuns în cache-ul semantic, acesta aplică o strategie de optimizare proactivă: populează automat și cache-ul exact.
+
+```python
+if cached_result:
+    print("[CACHE OPTIMIZATION] Backfilling Exact Cache from Semantic Hit")
+    cache_set(exact_key, cached_result, ttl=3600)
+    return json.dumps(cached_result)
+```
+
+**Beneficiul:** Următoarea interogare identică nu va mai necesita calculul vectorului și căutarea KNN, ci va fi servită direct din cache-ul exact, reducând și mai mult timpul de răspuns.
 
 Dacă avem un `CACHE_MISS`, se execută interogarea principală folosind `MongoDB Aggregation Pipeline`.
 
@@ -607,15 +635,53 @@ Indiferent dacă rezultatele provin din Vector Search sau din Fallback Regex, ac
 
 ---
 
-## 7. Monitorizare și Observabilitate  (TODO)
+## 7. Monitorizare și Observabilitate
 
-### Metrici Prometheus
-* `llm_cache_hits`: Numărul de cereri servite din Redis.
-* `llm_cache_misses`: Numărul de cereri procesate de LLM.
-* `request_latency`: Timpul total de execuție per request.
+### Arhitectura de Monitorizare
+Pentru a asigura stabilitatea și a măsura performanța sistemului în timp real, Kartog AI utilizează un stack standard de observabilitate compus din Prometheus și Grafana.
 
-### Vizualizare în Grafana
-Dashboard-urile includ grafice pentru rata de succes a cache-ului și distribuția tipurilor de joburi returnate.
+Aplicația Python expune un server HTTP dedicat metricilor pe portul 8000, rulând într-un thread separat (`daemon=True`) pentru a nu bloca fluxul principal al aplicației Streamlit.
+
+### Metrici
+
+`kartog_cache_ops_total` (Counter): Monitorizează eficiența strategiei de caching. Etichetele `method` ("exact" vs "semantic") și `status` ("hit" vs "miss") permit o analiză a modului în care interogările sunt rezolvate.
+
+`kartog_tool_usage_total` (Counter): Măsoară frecvența de utilizare a agenților (ex: `find_best_role_match` vs `search_mongodb_jobs`).
+
+`kartog_request_latency_seconds` (Histogram): Măsoară timpul de execuție pentru etape critice (`extractor_llm`, `neo4j_lookup`, `mongo_lookup`), esențial pentru identificarea bottleneck-urilor.
+
+### Vizualizări
+Pentru interpretarea datelor în Grafana, au fost definite următoarele interogări PromQL esențiale:
+
+#### 1. Cache Efficiency (Hit Rate %)
+Această interogare calculează procentul cererilor Redis în ultimele 5 minute.
+
+```
+sum(rate(kartog_cache_ops_total{status="hit"}[5m])) 
+/ 
+sum(rate(kartog_cache_ops_total[5m])) * 100
+```
+
+#### 2. Tool Usage Distribution
+Afișează numărul total de execuții pentru fiecare tool.
+
+```
+sum by (tool_name) (kartog_tool_usage_total)
+```
+
+#### 3. System Latency (Heatmap)
+Deoarece media timpilor de răspuns poate fi înșelătoare, această interogare (aplicată pe buckets) permite vizualizarea distribuției latenței. Ajută la identificarea procentului de cereri care durează neobișnuit de mult.
+
+```
+rate(kartog_request_latency_seconds_bucket[5m])
+```
+
+#### Exact vs. Semantic
+Această interogare compară volumul de trafic gestionat de cache-ul Exact față de cel Semantic pe o perioadă de o oră.
+
+```
+sum by (method) (increase(kartog_cache_ops_total[1h]))
+```
 
 ---
 
@@ -643,8 +709,8 @@ REDIS_URL=...
 - Noble, J. (2025) [What is LLM temperature?](https://www.ibm.com/think/topics/llm-temperature). IBM.
 - Noble, J. (2025) [Implementing graph RAG using knowledge graphs](https://www.ibm.com/think/tutorials/knowledge-graph-rag). IBM.
 - Manning, C. et al. (2009) [Introduction to Information Retrieval - Vector Space Classification](https://nlp.stanford.edu/IR-book/pdf/06vect.pdf). Cambridge University Press.
-- Redis Docs, [Vector search concepts](https://redis.io/docs/latest/develop/ai/search-and-query/vectors/)
-- MongoDB Docs, [Change Streams](https://www.mongodb.com/docs/manual/changeStreams/)
+- Redis Docs, [Vector search concepts](https://redis.io/docs/latest/develop/ai/search-and-query/vectors/).
+- MongoDB Docs, [Change Streams](https://www.mongodb.com/docs/manual/changeStreams/).
 - Wikipedia, [tf–idf](https://en.wikipedia.org/wiki/Tf%E2%80%93idf).
-- Google, Gemini: https://gemini.google.com/app/abf62a8ca2c7885e Date generated: 12.01.2026
-- Google, Gemini: https://gemini.google.com/app/468f5a02fccbed90 Date generated: 17.01.2026
+- Google, Gemini: https://gemini.google.com/app/abf62a8ca2c7885e Date generated: 12.01.2026.
+- Google, Gemini: https://gemini.google.com/app/468f5a02fccbed90 Date generated: 17.01.2026.

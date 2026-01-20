@@ -21,6 +21,71 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.graph_state = {"messages": [], "active_agent": "advisor"}
         st.rerun()
+    st.divider()
+    st.header("Debug Tools")
+
+    if st.button(
+        "Simulate Traffic", help="Generates hits, misses, and DB calls for Grafana"
+    ):
+        with st.spinner("Generating synthetic traffic..."):
+            from app import search_mongodb_jobs, find_best_role_match
+            import time
+            import random
+
+            status_text = st.empty()
+
+            for i in range(5):
+                status_text.write(f"Traffic Simulation: Batch {i + 1}/5")
+
+                # Exact Hit
+                search_mongodb_jobs.invoke(
+                    {
+                        "job_title": "Cloud Support Engineer",
+                        "location": "London",
+                        "experience_level": "Junior",
+                    }
+                )
+
+                # Repeat for second hit
+                search_mongodb_jobs.invoke(
+                    {
+                        "job_title": "Cloud Support Engineer",
+                        "location": "London",
+                        "experience_level": "Junior",
+                    }
+                )
+
+                # Semantic Hit
+                search_mongodb_jobs.invoke(
+                    {
+                        "job_title": "Blockchain Developer",
+                        "location": "Newcastle",
+                        "experience_level": "Mid-Level",
+                    }
+                )
+                search_mongodb_jobs.invoke(
+                    {
+                        "job_title": "Blockchain Dev",
+                        "location": "Newcastle",
+                        "experience_level": "Mid-Level",
+                    }
+                )
+
+                # Miss (Random)
+                search_mongodb_jobs.invoke(
+                    {
+                        "job_title": f"Random Job {random.randint(1, 9999)}",
+                        "location": "Newcastle",
+                        "experience_level": "Senior",
+                    }
+                )
+
+                # Neo4j
+                find_best_role_match.invoke({"skills": ["Bash", "Linux", "Jenkins"]})
+
+                time.sleep(0.5)
+
+            status_text.success("Traffic generated! Check Grafana.")
 
 
 @st.cache_resource

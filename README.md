@@ -1,6 +1,6 @@
 # Kartog AI
 
-**Status:** In Development | **Language:** Python | **Infrastructure:** Docker
+**Status:** Done | **Language:** Python | **Infrastructure:** Docker
 
 [Prezentare proiect](https://www.canva.com/design/DAG_C-2JKns/WMN_ucyutxqJsIT0zjy3mA/edit?utm_content=DAG_C-2JKns&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton)
 

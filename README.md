@@ -4,6 +4,9 @@
 
 [Prezentare proiect](https://www.canva.com/design/DAG_C-2JKns/WMN_ucyutxqJsIT0zjy3mA/edit?utm_content=DAG_C-2JKns&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton)
 
+
+[Videoclip DEMO](https://youtu.be/ucNr6DzTvjE)
+
 ## Table of Contents
 1. [Introducere și Obiective](#1-introducere-și-obiective)
 2. [Arhitectura Sistemului](#2-arhitectura-sistemului)
